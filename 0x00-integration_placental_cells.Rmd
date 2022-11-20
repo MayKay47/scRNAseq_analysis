@@ -1,0 +1,329 @@
+---
+title: "Integration using Seurat v3"
+author: "Mayen Kalu(Inim)"
+date: "`r Sys.Date()`"
+output: html_document
+---
+The `scRNAseq` datasets (published by Yang _et al_., 2021) with accession number `GSE173193`, were downloaded from `GEO NCBI`.
+This analysis is associated to a `CZI` project **Nigerian Maternal Atlas to Improve Birth Outcomes**.
+This analysis is my part contribution to the project.
+
+## Load package dependencies
+R packages needed for this analysis will be installed in R and the libraries will be loaded. Below are the R packages:
+```{r}
+library(Seurat)
+library(tidyverse)
+library(cowplot)
+library(ggplot2)
+library(ggrepel)
+library(Matrix)
+library(BiocManager)
+```
+
+## Load count data sets into R
+scRNA seq data of placental cells published by Yang et al., 2021 was downloaded from GEO ncbi and used for this analysis to probe its transcriptomics. C1 and C2 are from term pregnacies and served as control P1 and P2 are from pre-term pregnancies with pre-clampsia G1 and G2 are from gestational diabetes E1 and E2 are from pregancies of women in older age group...elderly.
+
+```{r}
+C1.data <- Read10X(data.dir = "../sc-integration/count_data_sets/C1/")
+C2.data <- Read10X(data.dir = "../sc-integration/count_data_sets/C2/")
+
+P1.data <- Read10X(data.dir = "../sc-integration/count_data_sets/P1/")
+P2.data <- Read10X(data.dir = "../sc-integration/count_data_sets/P2/")
+
+G1.data <- Read10X(data.dir = "../sc-integration/count_data_sets/G1/")
+G2.data <- Read10X(data.dir = "../sc-integration/count_data_sets/G2/")
+
+E1.data <- Read10X(data.dir = "../sc-integration/count_data_sets/E1/")
+E2.data <- Read10X(data.dir = "../sc-integration/count_data_sets/E2/")
+```
+
+## Create seurat objects
+Initializing seurat objects for the count dat sets.
+```{r}
+c1_obj <- CreateSeuratObject(C1.data, project = "NT")
+c1_obj
+c2_obj <- CreateSeuratObject(C2.data, project = "NT")
+c2_obj
+p1_obj <- CreateSeuratObject(P1.data, project = "PE")
+p1_obj
+p2_obj <- CreateSeuratObject(P2.data, project = "PE")
+p2_obj
+g1_obj <- CreateSeuratObject(G1.data, project = "GDM")
+g1_obj
+g2_obj <- CreateSeuratObject(G2.data, project = "GDM")
+g2_obj
+e1_obj <- CreateSeuratObject(E1.data, project = "AA")
+e1_obj
+e2_obj <- CreateSeuratObject(E2.data, project = "AA")
+e2_obj
+```
+
+## merge seurat objects
+Merge the duplicates of each condition.
+```{r}
+c_obj.m <- merge(x = c1_obj, y = c2_obj)
+c_obj.m
+p_obj.m <- merge(x = p1_obj, y = p2_obj)
+p_obj.m
+g_obj.m <- merge(x = g1_obj, y = g2_obj)
+g_obj.m
+e_obj.m <- merge(x = e1_obj, y = e2_obj)
+e_obj.m
+```
+
+## QC Metrics
+```{r}
+c_obj.m[["percent.mt"]]  <- PercentageFeatureSet(c_obj.m, pattern = "^MT-")
+c_obj.m[["percent.rbp"]] <- PercentageFeatureSet(c_obj.m, pattern = "^RP[SL]")
+
+p_obj.m[["percent.mt"]]  <- PercentageFeatureSet(p_obj.m, pattern = "^MT-")
+p_obj.m[["percent.rbp"]] <- PercentageFeatureSet(p_obj.m, pattern = "^RP[SL]")
+
+g_obj.m[["percent.mt"]]  <- PercentageFeatureSet(g_obj.m, pattern = "^MT-")
+g_obj.m[["percent.rbp"]] <- PercentageFeatureSet(g_obj.m, pattern = "^RP[SL]")
+
+e_obj.m[["percent.mt"]]  <- PercentageFeatureSet(e_obj.m, pattern = "^MT-")
+e_obj.m[["percent.rbp"]] <- PercentageFeatureSet(e_obj.m, pattern = "^RP[SL]")
+```
+
+## Visualise.........
+```{r}
+VlnPlot(c_obj.m, features = c("nFeature_RNA","nCount_RNA","percent.mt","percent.rbp"), ncol = 4)
+VlnPlot(p_obj.m, features = c("nFeature_RNA","nCount_RNA","percent.mt","percent.rbp"), ncol = 4)
+VlnPlot(g_obj.m, features = c("nFeature_RNA","nCount_RNA","percent.mt","percent.rbp"), ncol = 4)
+VlnPlot(e_obj.m, features = c("nFeature_RNA","nCount_RNA","percent.mt","percent.rbp"), ncol = 4)
+
+```
+
+## Comparing the genes names
+```{r}
+table(rownames(c_obj.m) %in% rownames(p_obj.m) %in% rownames(g_obj.m)  %in% rownames(e_obj.m))
+```
+
+## Filtering......
+```{r}
+c_obj.m <- subset(c_obj.m, subset = nFeature_RNA < 7500 & percent.mt < 5)
+p_obj.m <- subset(p_obj.m, subset = nFeature_RNA < 7500 & percent.mt < 5)
+g_obj.m <- subset(g_obj.m, subset = nFeature_RNA < 7500 & percent.mt < 5)
+e_obj.m <- subset(e_obj.m, subset = nFeature_RNA < 7500 & percent.mt < 5)
+```
+
+## Visualise filtered data
+```{r}
+VlnPlot(c_obj.m, features = c("nFeature_RNA","nCount_RNA","percent.mt","percent.rbp"), ncol = 4)
+VlnPlot(p_obj.m, features = c("nFeature_RNA","nCount_RNA","percent.mt","percent.rbp"), ncol = 4)
+VlnPlot(g_obj.m, features = c("nFeature_RNA","nCount_RNA","percent.mt","percent.rbp"), ncol = 4)
+VlnPlot(e_obj.m, features = c("nFeature_RNA","nCount_RNA","percent.mt","percent.rbp"), ncol = 4)
+```
+
+## Integration using Seurat v3
+# Create a list/column
+```{r}
+phase <- list()
+phase[["NT"]] <- c_obj.m
+phase[["PE"]] <- p_obj.m
+phase[["GDM"]] <- g_obj.m
+phase[["AA"]] <- e_obj.m
+
+for (i in 1:length(phase)) {
+  phase[[i]] <- NormalizeData(phase[[i]], verbose = F)
+  phase[[i]] <- FindVariableFeatures(phase[[i]], selection.method = "vst", nfeatures = 2000, verbose = F)
+}
+```
+
+## Integration....
+```{r}
+pc_anchors    <- FindIntegrationAnchors(object.list = phase, dims = 1:40)
+pc_seurat     <- IntegrateData(anchorset = pc_anchors, dims = 1:40)
+```
+
+## Seurat basic workflow BEFORE INTEGRATION
+```{r}
+DefaultAssay(pc_seurat) <- "RNA"
+
+pc_seurat <- NormalizeData(pc_seurat)
+pc_seurat <- FindVariableFeatures(pc_seurat, selection.method = "vst", nfeatures = 2000)
+pc_seurat <- ScaleData(pc_seurat)
+pc_seurat <- RunPCA(pc_seurat, npcs = 30)
+pc_seurat <- RunUMAP(pc_seurat, reduction = "pca", dims = 1:23)
+```
+
+# Visualisation of the data before integration
+```{r}
+DimPlot(pc_seurat,reduction = "umap") + labs(title = "Before Integration: Placental cells")
+```
+
+## Seurat basic workflow AFTER INTEGRATION
+```{r}
+DefaultAssay(pc_seurat) <- "integrated"
+
+pc_seurat <- ScaleData(pc_seurat)
+pc_seurat <- RunPCA(pc_seurat, npcs = 30)
+pc_seurat <- RunUMAP(pc_seurat, reduction = "pca", dims = 1:22)
+```
+
+# Visualisation of the data after integration
+```{r}
+DimPlot(pc_seurat,reduction = "umap") + labs(title = "After Integration: Placental cells")
+
+DimPlot(pc_seurat, reduction = "umap", split.by = "ident") + NoLegend()
+```
+
+## Clustering Analysis.............
+To be continued
+```{r}
+pc_seurat <- FindNeighbors(pc_seurat, dims = 1:22)
+pc_seurat <- FindClusters(pc_seurat, resolution = 0.5)
+DimPlot(pc_seurat,label = T)
+```
+## Visualise Distribution frequency
+## as table
+```{r}
+count_table <- table(pc_seurat@meta.data$seurat_clusters, pc_seurat@meta.data$orig.ident)
+count_table
+count_table1 <- as.data.frame(count_table)
+```
+
+## rename column names (headers)
+```{r}
+colnames(count_table1) <- c("Cluster", "Dataset","Fraction.of.Cells")
+colnames(count_table1)[1] <- "Cluster" 
+colnames(count_table1)[2] <- "Dataset" 
+colnames(count_table1)[3] <- "Fraction.of.Cells" 
+print(count_table1)
+```
+
+## Visualizations
+## as stacked bar plot
+```{r}
+plot_integrated_clusters <- ggplot(count_table1, 
+       aes(fill= Dataset, x=Fraction.of.Cells, y=Cluster)) + 
+  geom_bar(position="fill", stat="identity") 
+plot_integrated_clusters
+```
+
+## Marker Identification
+```{r}
+all_markers <- FindAllMarkers(pc_seurat, 
+                              only.pos = TRUE,  min.pct= 0.25, logfc.threshold = 0.25)
+head(all_markers)
+```
+
+## lets look at the top markers (by log2FC) for each cluster
+```{r}
+top_markers <- all_markers %>% 
+  group_by(cluster) %>% 
+  top_n(n = 3, wt= avg_log2FC) %>% 
+  pull(gene) %>%
+  unique()
+top_markers
+```
+
+## Other Visualizations
+## HeatMap
+```{r}
+DoHeatmap(pc_seurat, features = top_markers) 
+```
+## DotPlot
+```{r}
+DotPlot(pc_seurat, features = top_markers, cols = c('purple', 'green')) + 
+  theme(axis.text = element_text(angle = 45, hjust = 1))
+```
+
+
+## Differential Expression of Genes
+```{r}
+C0.M <- FindMarkers(pc_seurat, ident.1 = 0, min.pct= 0.25, logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+C1.M <- FindMarkers(pc_seurat, ident.1 = 1, min.pct= 0.25, logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+C2.M <- FindMarkers(pc_seurat, ident.1 = 2, min.pct= 0.25, logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+C3.M <- FindMarkers(pc_seurat, ident.1 = 3, min.pct= 0.25, logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+C4.M <- FindMarkers(pc_seurat, ident.1 = 4, min.pct= 0.25,  logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+C5.M <- FindMarkers(pc_seurat, ident.1 = 5, min.pct= 0.25,  logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+C6.M <- FindMarkers(pc_seurat, ident.1 = 6, min.pct= 0.25,  logfc.threshold = 0.25, test.use = "roc",   only.pos = TRUE)
+C7.M <- FindMarkers(pc_seurat, ident.1 = 7, min.pct= 0.25,  logfc.threshold = 0.25, test.use = "roc",  only.pos = TRUE)
+C8.M <- FindMarkers(pc_seurat, ident.1 = 8, min.pct= 0.25,  logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+C9.M <- FindMarkers(pc_seurat, ident.1 = 9, min.pct= 0.25,  logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+C10.M <- FindMarkers(pc_seurat, ident.1 = 10, min.pct= 0.25,  logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+C11.M <- FindMarkers(pc_seurat, ident.1 = 11, min.pct= 0.25,  logfc.threshold = 0.25, test.use = "roc",  only.pos = TRUE)
+C12.M <- FindMarkers(pc_seurat, ident.1 = 12, min.pct= 0.25,  logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+C13.M <- FindMarkers(pc_seurat, ident.1 = 13, min.pct= 0.25, logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+C14.M <- FindMarkers(pc_seurat, ident.1 = 14, min.pct= 0.25,  logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+C15.M <- FindMarkers(pc_seurat, ident.1 = 15, min.pct= 0.25,  logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+C16.M <- FindMarkers(pc_seurat, ident.1 = 16, min.pct= 0.25,  logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+C17.M <- FindMarkers(pc_seurat, ident.1 = 17, min.pct= 0.25,  logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+C18.M <- FindMarkers(pc_seurat, ident.1 = 18, min.pct= 0.25,  logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+C19.M <- FindMarkers(pc_seurat, ident.1 = 19, min.pct= 0.25,  logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+C20.M <- FindMarkers(pc_seurat, ident.1 = 20, min.pct= 0.25,  logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+C21.M <- FindMarkers(pc_seurat, ident.1 = 21, min.pct= 0.25,  logfc.threshold = 0.25, test.use = "roc",  only.pos = TRUE)
+```
+
+# Cell Type Annotation
+# Using ScType to identify cell types
+# load libraries and functions
+```{r}
+lapply(c("dplyr","Seurat","HGNChelper"), library, character.only = T)
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/gene_sets_prepare.R"); source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/sctype_score_.R")
+
+```
+
+# load gene set preparation function
+```{r}
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/gene_sets_prepare.R")
+```
+
+# load cell type annotation function
+```{r}
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/sctype_score_.R")
+```
+
+# DB file
+```{r}
+db_ = "../sc-integration/scTypeDB_short edit.xlsx";
+tissue = "Placenta"
+```
+
+# prepare gene sets
+```{r}
+gs_list = gene_sets_prepare(db_,"Placenta")
+```
+
+# get cell-type by cell matrix
+```{r}
+es.max = sctype_score(scRNAseqData = pc_seurat[["RNA"]]@scale.data, scaled = TRUE, 
+                      gs = gs_list$gs_positive, gs2 = gs_list$gs_negative)
+```
+
+# merge by cluster
+```{r}
+cL_resutls = do.call("rbind", lapply(unique(pc_seurat@meta.data$seurat_clusters), function(cl){
+  es.max.cl = sort(rowSums(es.max[ ,rownames(pc_seurat@meta.data[pc_seurat@meta.data$seurat_clusters==cl, ])]), decreasing = !0)
+  head(data.frame(cluster = cl, type = names(es.max.cl), scores = es.max.cl, ncells = sum(pc_seurat@meta.data$seurat_clusters==cl)), 10)
+}))
+sctype_scores = cL_resutls %>% group_by(cluster) %>% top_n(n = 1, wt = scores)
+```
+
+#Plot umap
+```{r}
+pc_seurat@meta.data$customclassif = ""
+for(j in unique(sctype_scores$cluster)){
+  cl_type = sctype_scores[sctype_scores$cluster==j,]; 
+  pc_seurat@meta.data$customclassif[pc_seurat@meta.data$seurat_clusters == j] = as.character(cl_type$type[1])
+}
+
+DimPlot(pc_seurat, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'customclassif')
+```
+
+```{r}
+DoHeatmap(pc_seurat, features = top_markers, group.by = 'customclassif') 
+```
+
+```{r}
+DotPlot(pc_seurat, features = top_markers, cols = c('purple', 'green'), group.by = 'customclassif') +   theme(axis.text = element_text(angle = 45, hjust = 1))
+```
+
+## Save spot
+Save clustered seurat object for downstream analyses.
+```{r}
+saveRDS(pc_seurat, file="../sc-integration/pc_seurat_clustered.rds")
+```
+
